@@ -12,6 +12,7 @@ import { Campaign, Task, Transaction, User, Platform, TaskType, CampaignStatus, 
 import { I18nProvider, useLanguage } from './services/i18n';
 import { checkSessionService, loadUserData, logoutService, saveUserData } from './services/firebase';
 import { Coins, Sparkles, X, Calendar, Gift } from 'lucide-react';
+import { supabase } from './services/supabase';
 
 // GLOBAL MOCK TASKS (In real app, these come from DB)
 const GLOBAL_TASKS: Task[] = [
