@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Lock, Mail, ArrowRight, User, CheckCircle } from 'lucide-react';
 import { useLanguage } from '../services/i18n';
 import { loginService, signupService } from '../services/firebase';
+import { supabase } from '../services/supabase';
 
 interface LoginProps {
   onLogin: (data: {user: any, isNew: boolean}) => void;
@@ -50,27 +51,21 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    setIsLoading(true);
-    // Simulating Google Auth - in real app use signInWithPopup
-    setTimeout(async () => {
+    const handleGoogleLogin = async () => {
+        setIsLoading(true);
+        setError('');
         try {
-            // Check if user exists (simulated by email)
-            const mockEmail = "google_user@example.com";
-            // Try login first
-            try {
-                const result = await loginService(mockEmail, "google_pass");
-                onLogin(result);
-            } catch {
-                // If fail, signup
-                const result = await signupService(mockEmail, "google_pass", "Google User");
-                onLogin(result);
+            const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
+            if (error) {
+                setError(error.message);
+                setIsLoading(false);
             }
-        } catch (e) {
+            // On success, Supabase will redirect to the callback URL
+        } catch (e: any) {
+            setError(e.message || 'Google login failed');
             setIsLoading(false);
         }
-    }, 1500);
-  }
+    };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 font-sans relative overflow-hidden">
