@@ -80,9 +80,26 @@ const Profile: React.FC<ProfileProps> = ({ user, onLogout, onUpdateUser }) => {
     setSettings(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const toggleLink = (p: Platform) => {
-    setLinkedAccounts(prev => ({ ...prev, [p]: !prev[p] }));
-  };
+
+    // Trigger OAuth flow for supported platforms
+    const handleOAuthLink = (platform: Platform) => {
+        let url = '';
+        switch (platform) {
+            case Platform.Google:
+                url = '/auth/google';
+                break;
+            case Platform.Facebook:
+                url = '/auth/facebook';
+                break;
+            case Platform.Twitter:
+                url = '/auth/twitter';
+                break;
+            // Add more as needed
+            default:
+                return;
+        }
+        window.open(url, '_self'); // or '_blank' for new tab
+    };
 
   const handleSave = () => {
     setSaving(true);
@@ -458,7 +475,7 @@ const Profile: React.FC<ProfileProps> = ({ user, onLogout, onUpdateUser }) => {
                      <span className="font-medium text-slate-900">{platform}</span>
                 </div>
                 <button 
-                    onClick={() => toggleLink(platform)}
+                    onClick={() => handleOAuthLink(platform)}
                     className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
                         linkedAccounts[platform] 
                         ? 'bg-green-50 text-green-600 border border-green-200' 
