@@ -76,41 +76,113 @@ const AppContent: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [notification, setNotification] = useState<Notification | null>(null);
 
+
   // --- PERSISTENCE & SESSION CHECK ---
   useEffect(() => {
     const initSession = async () => {
-        const userId = await checkSessionService();
-        if (userId) {
-            const data = await loadUserData(userId);
-            if (data) {
-                // Check and Reset Daily Limits (Bonus + Ads)
-                const today = new Date().toISOString().split('T')[0];
-                const lastAdDate = data.user.lastAdDate ? data.user.lastAdDate.split('T')[0] : '';
-                let updatedUser = { ...data.user };
+      const userId = await checkSessionService();
+      if (userId) {
+        const data = await loadUserData(userId);
+        if (data) {
+          // Check and Reset Daily Limits (Bonus + Ads)
+          const today = new Date().toISOString().split('T')[0];
+          const lastAdDate = data.user.lastAdDate ? data.user.lastAdDate.split('T')[0] : '';
+          let updatedUser = { ...data.user };
 
-                if (lastAdDate !== today) {
-                    updatedUser = { ...updatedUser, adWatchesToday: 0, lastAdDate: new Date().toISOString() };
-                }
+          if (lastAdDate !== today) {
+            updatedUser = { ...updatedUser, adWatchesToday: 0, lastAdDate: new Date().toISOString() };
+          }
 
-                setUser(updatedUser);
-                setCampaigns(data.campaigns);
-                setTransactions(data.transactions);
-                setIsLoggedIn(true);
-                setHasOnboarded(data.user.country !== 'Worldwide'); 
-                
-                // Check Daily Bonus on Init
-                checkDailyBonus(updatedUser);
-            }
+          setUser(updatedUser);
+          setCampaigns(data.campaigns);
+          setTransactions(data.transactions);
+          setIsLoggedIn(true);
+          setHasOnboarded(data.user.country !== 'Worldwide');
+
+          // Check Daily Bonus on Init
+          checkDailyBonus(updatedUser);
         }
-        setLoadingSession(false);
+      }
+      setLoadingSession(false);
     };
     initSession();
+
+    // --- SUPABASE REAL-TIME SUBSCRIPTIONS ---
+    // Import supabase client
+    // @ts-ignore
+    import { supabase } from './services/supabase';
+
+    // Campaigns real-time
+    const campaignsSub = supabase
+      .channel('public:campaigns')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaigns' }, (payload) => {
+        if (payload.new) {
+          setCampaigns((prev) => {
+            const idx = prev.findIndex(c => c.id === payload.new.id);
+            if (idx !== -1) {
+              // Update existing
+              const updated = [...prev];
+              updated[idx] = payload.new;
+              return updated;
+            } else {
+              // Add new
+              return [payload.new, ...prev];
+            }
+          });
+        }
+        if (payload.eventType === 'DELETE' && payload.old) {
+          setCampaigns((prev) => prev.filter(c => c.id !== payload.old.id));
+        }
+      })
+      .subscribe();
+
+    // Tasks real-time
+    const tasksSub = supabase
+      .channel('public:tasks')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, (payload) => {
+        if (payload.new) {
+          setTasks((prev) => {
+            const idx = prev.findIndex(t => t.id === payload.new.id);
+            if (idx !== -1) {
+              const updated = [...prev];
+              updated[idx] = payload.new;
+              return updated;
+            } else {
+              return [payload.new, ...prev];
+            }
+          });
+        }
+        if (payload.eventType === 'DELETE' && payload.old) {
+          setTasks((prev) => prev.filter(t => t.id !== payload.old.id));
+        }
+      })
+      .subscribe();
+
+    // Notifications real-time
+    const notificationsSub = supabase
+      .channel('public:notifications')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, (payload) => {
+        if (payload.new) {
+          setNotification(payload.new);
+        }
+        if (payload.eventType === 'DELETE') {
+          setNotification(null);
+        }
+      })
+      .subscribe();
+
+    // Cleanup subscriptions on unmount
+    return () => {
+      supabase.removeChannel(campaignsSub);
+      supabase.removeChannel(tasksSub);
+      supabase.removeChannel(notificationsSub);
+    };
   }, []);
 
-  // Auto-Save Data on Changes
+  // Auto-Save Data on Changes (persist to Supabase)
   useEffect(() => {
     if (isLoggedIn && user) {
-        saveUserData(user.id, { user, campaigns, transactions });
+      saveUserData(user.id, { user, campaigns, transactions });
     }
   }, [user, campaigns, transactions, isLoggedIn]);
 
@@ -135,28 +207,34 @@ const AppContent: React.FC = () => {
       }
   };
 
-  const handleClaimDailyBonus = () => {
-      if (!user) return;
-      const today = new Date().toISOString();
-      const newStreak = (user.streak || 0) + 1;
+  const handleClaimDailyBonus = async () => {
+    if (!user) return;
+    const today = new Date().toISOString();
+    const newStreak = (user.streak || 0) + 1;
 
-      setUser(prev => prev ? ({ 
-          ...prev, 
-          credits: prev.credits + dailyBonusAmount,
-          streak: newStreak,
-          lastLoginDate: today
-      }) : null);
-
-      setTransactions(prev => [{
-          id: Date.now().toString(),
-          type: 'bonus',
-          amount: dailyBonusAmount,
-          date: today,
-          description: `Daily Streak Bonus (Day ${newStreak})`
-      }, ...prev]);
-
-      setShowDailyBonus(false);
-      showNotify(`+${dailyBonusAmount} Daily Coins Claimed!`);
+    const updatedUser = {
+      ...user,
+      credits: user.credits + dailyBonusAmount,
+      streak: newStreak,
+      lastLoginDate: today
+    };
+    setUser(updatedUser);
+    setTransactions(prev => [{
+      id: Date.now().toString(),
+      type: 'bonus',
+      amount: dailyBonusAmount,
+      date: today,
+      description: `Daily Streak Bonus (Day ${newStreak})`
+    }, ...prev]);
+    await saveUserData(user.id, { user: updatedUser, campaigns, transactions: [{
+      id: Date.now().toString(),
+      type: 'bonus',
+      amount: dailyBonusAmount,
+      date: today,
+      description: `Daily Streak Bonus (Day ${newStreak})`
+    }, ...transactions] });
+    setShowDailyBonus(false);
+    showNotify(`+${dailyBonusAmount} Daily Coins Claimed!`);
   };
 
   // Helper for notifications
@@ -247,18 +325,17 @@ const AppContent: React.FC = () => {
     }
   }
 
-  const handleCreateCampaign = (campaignData: Partial<Campaign>) => {
+  const handleCreateCampaign = async (campaignData: Partial<Campaign>) => {
     if (!user) return;
     const newCampaign: Campaign = {
       ...campaignData,
       id: Date.now().toString(),
+      user_id: user.id
     } as Campaign;
-
     const cost = newCampaign.totalRequested * newCampaign.costPerAction;
-    
-    setUser(prev => prev ? ({ ...prev, credits: prev.credits - cost }) : null);
+    const updatedUser = { ...user, credits: user.credits - cost };
+    setUser(updatedUser);
     setCampaigns(prev => [newCampaign, ...prev]);
-
     const newTx: Transaction = {
       id: Date.now().toString(),
       type: 'spend',
@@ -267,43 +344,52 @@ const AppContent: React.FC = () => {
       description: `Campaign: ${newCampaign.platform} ${newCampaign.type}`
     };
     setTransactions(prev => [newTx, ...prev]);
+    await saveUserData(user.id, { user: updatedUser, campaigns: [newCampaign, ...campaigns], transactions: [newTx, ...transactions] });
     showNotify('Campaign launched successfully!');
   };
 
-  const handleToggleCampaignStatus = (id: string) => {
-    setCampaigns(prev => prev.map(c => {
-        if (c.id === id) {
-            const newStatus = c.status === CampaignStatus.Active ? CampaignStatus.Paused : CampaignStatus.Active;
-            return { ...c, status: newStatus };
-        }
-        return c;
-    }));
+  const handleToggleCampaignStatus = async (id: string) => {
+    const updatedCampaigns = campaigns.map(c => {
+      if (c.id === id) {
+        const newStatus = c.status === CampaignStatus.Active ? CampaignStatus.Paused : CampaignStatus.Active;
+        return { ...c, status: newStatus };
+      }
+      return c;
+    });
+    setCampaigns(updatedCampaigns);
+    await saveUserData(user!.id, { user: user!, campaigns: updatedCampaigns, transactions });
     showNotify(t('camp.updated'), 'info');
   };
 
-  const handleDeleteCampaign = (id: string) => {
+  const handleDeleteCampaign = async (id: string) => {
     const campaign = campaigns.find(c => c.id === id);
     if (!campaign || !user) return;
-
     const remaining = campaign.totalRequested - campaign.completedCount;
+    let updatedUser = user;
+    let newTx: Transaction | null = null;
     if (remaining > 0) {
-        const refundAmount = remaining * campaign.costPerAction;
-        setUser(prev => prev ? ({ ...prev, credits: prev.credits + refundAmount }) : null);
-        setTransactions(prev => [{
-            id: Date.now().toString(),
-            type: 'bonus',
-            amount: refundAmount,
-            date: new Date().toISOString(),
-            description: `Refund: ${campaign.platform} Campaign`
-        }, ...prev]);
+      const refundAmount = remaining * campaign.costPerAction;
+      updatedUser = { ...user, credits: user.credits + refundAmount };
+      newTx = {
+        id: Date.now().toString(),
+        type: 'bonus',
+        amount: refundAmount,
+        date: new Date().toISOString(),
+        description: `Refund: ${campaign.platform} Campaign`
+      };
+      setTransactions(prev => [newTx!, ...prev]);
     }
-
-    setCampaigns(prev => prev.filter(c => c.id !== id));
+    const updatedCampaigns = campaigns.filter(c => c.id !== id);
+    setUser(updatedUser);
+    setCampaigns(updatedCampaigns);
+    await saveUserData(user.id, { user: updatedUser, campaigns: updatedCampaigns, transactions: newTx ? [newTx, ...transactions] : transactions });
     showNotify(t('camp.refunded'), 'success');
   };
 
-  const handleUpdateCampaign = (id: string, updates: Partial<Campaign>) => {
-    setCampaigns(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+  const handleUpdateCampaign = async (id: string, updates: Partial<Campaign>) => {
+    const updatedCampaigns = campaigns.map(c => c.id === id ? { ...c, ...updates } : c);
+    setCampaigns(updatedCampaigns);
+    await saveUserData(user!.id, { user: user!, campaigns: updatedCampaigns, transactions });
     showNotify(t('camp.updated'));
   };
 

@@ -22,65 +22,41 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 */
 
-import { User, Campaign, Task, Transaction, Platform, TaskType } from "../types";
 
-// --- SIMULATION HELPERS (Uses LocalStorage to mimic Firebase) ---
-const STORAGE_KEY_USERS = 'followme_users_db';
-const STORAGE_KEY_SESSION = 'followme_session';
-
-interface DB {
-    users: Record<string, {
-        user: User;
-        campaigns: Campaign[];
-        transactions: Transaction[];
-        tasks: Task[]; // Available tasks for this user
-    }>
-}
-
-const getDB = (): DB => {
-    const data = localStorage.getItem(STORAGE_KEY_USERS);
-    return data ? JSON.parse(data) : { users: {} };
-};
-
-const saveDB = (db: DB) => {
-    localStorage.setItem(STORAGE_KEY_USERS, JSON.stringify(db));
-};
+import { supabase } from './supabase';
+import { User, Campaign, Task, Transaction } from '../types';
 
 // --- AUTH SERVICES ---
 
-export const loginService = async (email: string, password: string): Promise<{user: User, isNew: boolean}> => {
-    // SIMULATION: Check if user exists in local DB
-    await new Promise(r => setTimeout(r, 800)); // Fake network delay
-    
-    const db = getDB();
-    const foundId = Object.keys(db.users).find(id => db.users[id].user.email === email);
-
-    if (foundId) {
-        // User exists, return data
-        localStorage.setItem(STORAGE_KEY_SESSION, foundId);
-        return { user: db.users[foundId].user, isNew: false };
-    } else {
-        throw new Error("User not found. Please Sign Up.");
+export const loginService = async (email: string, password: string): Promise<{ user: User, isNew: boolean }> => {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error || !data.user) {
+        throw new Error(error?.message || 'Login failed.');
     }
+    // Fetch user profile from 'users' table
+    const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', data.user.id)
+        .single();
+    if (userError || !userData) {
+        throw new Error(userError?.message || 'User profile not found.');
+    }
+    return { user: userData as User, isNew: false };
 };
 
-export const signupService = async (email: string, password: string, username: string): Promise<{user: User, isNew: boolean}> => {
-    // SIMULATION: Create new user
-    await new Promise(r => setTimeout(r, 800));
-    
-    const db = getDB();
-    const exists = Object.keys(db.users).find(id => db.users[id].user.email === email);
-    
-    if (exists) {
-        throw new Error("User already exists. Please Log In.");
+export const signupService = async (email: string, password: string, username: string): Promise<{ user: User, isNew: boolean }> => {
+    // Sign up with Supabase Auth
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error || !data.user) {
+        throw new Error(error?.message || 'Signup failed.');
     }
-
-    const newUserId = 'u_' + Date.now();
+    // Create user profile in 'users' table
     const newUser: User = {
-        id: newUserId,
-        username: username,
-        email: email,
-        credits: 50, // BONUS FOR NEW USERS
+        id: data.user.id,
+        username,
+        email,
+        credits: 50,
         reputation: 100,
         avatarUrl: `https://ui-avatars.com/api/?name=${username}&background=random`,
         streak: 1,
@@ -90,51 +66,83 @@ export const signupService = async (email: string, password: string, username: s
         country: 'Worldwide',
         language: 'EN'
     };
-
-    // Initialize empty data for new user
-    db.users[newUserId] = {
-        user: newUser,
-        campaigns: [],
-        transactions: [{
-            id: 'tx_welcome',
+    const { error: insertError } = await supabase.from('users').insert([newUser]);
+    if (insertError) {
+        throw new Error(insertError.message);
+    }
+    // Add welcome transaction
+    await supabase.from('transactions').insert([
+        {
+            id: 'tx_welcome_' + newUser.id,
             type: 'bonus',
             amount: 50,
             date: new Date().toISOString(),
-            description: 'Welcome Bonus 🎉'
-        }],
-        tasks: [] // In a real app, this would fetch global tasks. We'll handle this in App.tsx
-    };
-
-    saveDB(db);
-    localStorage.setItem(STORAGE_KEY_SESSION, newUserId);
-    
+            description: 'Welcome Bonus 🎉',
+            user_id: newUser.id
+        }
+    ]);
     return { user: newUser, isNew: true };
 };
 
 export const logoutService = async () => {
-    localStorage.removeItem(STORAGE_KEY_SESSION);
+    await supabase.auth.signOut();
 };
 
 export const checkSessionService = async (): Promise<string | null> => {
-    return localStorage.getItem(STORAGE_KEY_SESSION);
+    const { data } = await supabase.auth.getSession();
+    return data.session?.user?.id || null;
 };
 
 // --- DATA SERVICES ---
 
 export const loadUserData = async (userId: string) => {
-    const db = getDB();
-    return db.users[userId] || null;
+    // Fetch user profile, campaigns, transactions, and tasks
+    const { data: user, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .single();
+    if (userError || !user) return null;
+
+    const { data: campaigns } = await supabase
+        .from('campaigns')
+        .select('*')
+        .eq('user_id', userId);
+
+    const { data: transactions } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', userId);
+
+    const { data: tasks } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('user_id', userId);
+
+    return {
+        user,
+        campaigns: campaigns || [],
+        transactions: transactions || [],
+        tasks: tasks || []
+    };
 };
 
 export const saveUserData = async (
-    userId: string, 
+    userId: string,
     data: { user: User, campaigns: Campaign[], transactions: Transaction[] }
 ) => {
-    const db = getDB();
-    if (db.users[userId]) {
-        db.users[userId].user = data.user;
-        db.users[userId].campaigns = data.campaigns;
-        db.users[userId].transactions = data.transactions;
-        saveDB(db);
+    // Update user profile
+    await supabase.from('users').update(data.user).eq('id', userId);
+    // Update campaigns
+    if (data.campaigns.length > 0) {
+        for (const campaign of data.campaigns) {
+            await supabase.from('campaigns').upsert({ ...campaign, user_id: userId });
+        }
+    }
+    // Update transactions
+    if (data.transactions.length > 0) {
+        for (const tx of data.transactions) {
+            await supabase.from('transactions').upsert({ ...tx, user_id: userId });
+        }
     }
 };

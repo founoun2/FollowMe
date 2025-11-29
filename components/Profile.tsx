@@ -1,5 +1,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { saveUserData } from '../services/firebase';
+import { uploadImage, getImageUrl } from '../services/supabase';
 import { User, Platform, COUNTRIES_LIST } from '../types';
 import { 
     Settings, Shield, Bell, LogOut, UserPlus, ChevronRight, 
@@ -110,12 +112,14 @@ const Profile: React.FC<ProfileProps> = ({ user, onLogout, onUpdateUser }) => {
     }, 1000);
   };
 
-  const handleSaveProfile = () => {
-      if (onUpdateUser) {
-          onUpdateUser({ username: editName });
-      }
-      setIsEditing(false);
-  };
+    const handleSaveProfile = async () => {
+        if (onUpdateUser) {
+            onUpdateUser({ username: editName });
+            // Persist username change to Supabase
+            await saveUserData(user.id, { user: { ...user, username: editName }, campaigns: [], transactions: [] });
+        }
+        setIsEditing(false);
+    };
 
   const handleAvatarClick = () => {
       if(isEditing && fileInputRef.current) {
@@ -123,16 +127,22 @@ const Profile: React.FC<ProfileProps> = ({ user, onLogout, onUpdateUser }) => {
       }
   };
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (file && onUpdateUser) {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-              onUpdateUser({ avatarUrl: reader.result as string });
-          };
-          reader.readAsDataURL(file);
-      }
-  };
+    const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file && onUpdateUser) {
+            try {
+                // Upload to Supabase Storage
+                const path = `avatars/${user.id}_${Date.now()}`;
+                await uploadImage(file, path);
+                const avatarUrl = getImageUrl(path);
+                onUpdateUser({ avatarUrl });
+                // Persist avatar change to Supabase
+                await saveUserData(user.id, { user: { ...user, avatarUrl }, campaigns: [], transactions: [] });
+            } catch (err) {
+                // Handle upload error (optional)
+            }
+        }
+    };
 
   const handleCopyLink = () => {
       const link = `https://followme.app/ref/${user.username}`;
@@ -250,84 +260,90 @@ const Profile: React.FC<ProfileProps> = ({ user, onLogout, onUpdateUser }) => {
     </div>
   );
 
-  const renderLanguageContent = () => (
-    <div className="space-y-4">
-        <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Display Language</label>
-            <div className="grid grid-cols-1 gap-2">
-                {[
-                    {code: 'EN', label: 'English (US)'}, 
-                    {code: 'FR', label: 'Français'}, 
-                    {code: 'AR', label: 'العربية'}
-                ].map(l => (
-                    <button 
-                        key={l.code}
-                        onClick={() => setLang(l.code as any)}
-                        className={`flex items-center justify-between px-4 py-3 rounded-xl border text-sm transition-all ${
-                            lang === l.code 
-                            ? 'border-indigo-600 bg-indigo-50 text-indigo-700 font-bold shadow-sm' 
-                            : 'border-slate-100 bg-white hover:bg-slate-50 text-slate-600'
-                        }`}
-                    >
-                        {l.label}
-                        {lang === l.code && <Check className="w-4 h-4" />}
-                    </button>
-                ))}
+    const renderLanguageContent = () => (
+        <div className="space-y-4">
+            <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Display Language</label>
+                <div className="grid grid-cols-1 gap-2">
+                    {[{ code: 'EN', label: 'English (US)' }, { code: 'FR', label: 'Français' }, { code: 'AR', label: 'العربية' }].map(l => (
+                        <button
+                            key={l.code}
+                            onClick={async () => {
+                                setLang(l.code as any);
+                                if (onUpdateUser) {
+                                    onUpdateUser({ language: l.code });
+                                    await saveUserData(user.id, { user: { ...user, language: l.code }, campaigns: [], transactions: [] });
+                                }
+                            }}
+                            className={`flex items-center justify-between px-4 py-3 rounded-xl border text-sm transition-all ${
+                                lang === l.code
+                                    ? 'border-indigo-600 bg-indigo-50 text-indigo-700 font-bold shadow-sm'
+                                    : 'border-slate-100 bg-white hover:bg-slate-50 text-slate-600'
+                            }`}
+                        >
+                            {l.label}
+                            {lang === l.code && <Check className="w-4 h-4" />}
+                        </button>
+                    ))}
+                </div>
             </div>
-        </div>
 
-        <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Region</label>
-            <div className="relative" ref={regionRef}>
-                <button 
-                    onClick={() => setIsRegionOpen(!isRegionOpen)}
-                    className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-slate-200 text-sm bg-white hover:bg-slate-50 transition-colors"
-                >
-                    <span className="font-medium text-slate-900">{settings.region}</span>
-                    <ChevronDown className="w-4 h-4 text-slate-400" />
-                </button>
-                
-                {isRegionOpen && (
-                    <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-slate-100 z-20 max-h-48 flex flex-col overflow-hidden animate-slide-down">
-                         <div className="p-2 border-b border-slate-50 bg-slate-50/50 sticky top-0">
-                            <div className="relative">
-                                <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
-                                <input 
-                                    type="text" 
-                                    placeholder="Search country..." 
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    autoFocus
-                                    className="w-full pl-8 pr-3 py-1.5 text-sm rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
-                                />
+            <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Region</label>
+                <div className="relative" ref={regionRef}>
+                    <button
+                        onClick={() => setIsRegionOpen(!isRegionOpen)}
+                        className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-slate-200 text-sm bg-white hover:bg-slate-50 transition-colors"
+                    >
+                        <span className="font-medium text-slate-900">{settings.region}</span>
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                    </button>
+
+                    {isRegionOpen && (
+                        <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-slate-100 z-20 max-h-48 flex flex-col overflow-hidden animate-slide-down">
+                            <div className="p-2 border-b border-slate-50 bg-slate-50/50 sticky top-0">
+                                <div className="relative">
+                                    <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
+                                    <input
+                                        type="text"
+                                        placeholder="Search country..."
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        autoFocus
+                                        className="w-full pl-8 pr-3 py-1.5 text-sm rounded-lg border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none"
+                                    />
+                                </div>
+                            </div>
+                            <div className="overflow-y-auto flex-1 p-1">
+                                {filteredRegions.map(c => (
+                                    <button
+                                        key={c.name}
+                                        onClick={async () => {
+                                            setSettings({ ...settings, region: c.name });
+                                            setIsRegionOpen(false);
+                                            setSearchQuery('');
+                                            if (onUpdateUser) {
+                                                onUpdateUser({ country: c.name });
+                                                await saveUserData(user.id, { user: { ...user, country: c.name }, campaigns: [], transactions: [] });
+                                            }
+                                        }}
+                                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm hover:bg-indigo-50 transition-colors ${settings.region === c.name ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-slate-600'}`}
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            <span>{c.flag}</span>
+                                            <span>{c.name}</span>
+                                        </div>
+                                        {settings.region === c.name && <Check className="w-4 h-4 text-indigo-600" />}
+                                    </button>
+                                ))}
+                                {filteredRegions.length === 0 && <div className="p-3 text-center text-xs text-slate-400">No results</div>}
                             </div>
                         </div>
-                        <div className="overflow-y-auto flex-1 p-1">
-                            {filteredRegions.map(c => (
-                                <button
-                                    key={c.name}
-                                    onClick={() => {
-                                        setSettings({...settings, region: c.name});
-                                        setIsRegionOpen(false);
-                                        setSearchQuery('');
-                                    }}
-                                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm hover:bg-indigo-50 transition-colors ${settings.region === c.name ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-slate-600'}`}
-                                >
-                                    <div className="flex items-center gap-2">
-                                        <span>{c.flag}</span>
-                                        <span>{c.name}</span>
-                                    </div>
-                                    {settings.region === c.name && <Check className="w-4 h-4 text-indigo-600" />}
-                                </button>
-                            ))}
-                            {filteredRegions.length === 0 && <div className="p-3 text-center text-xs text-slate-400">No results</div>}
-                        </div>
-                    </div>
-                )}
+                    )}
+                </div>
             </div>
         </div>
-    </div>
-  );
+    );
 
   const renderHelpContent = () => {
     const faqs = [

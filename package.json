@@ -10,10 +10,10 @@
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
+    "@supabase/supabase-js": "^2.86.0",
     "express": "^5.1.0",
     "express-session": "^1.18.2",
     "lucide-react": "^0.554.0",
-    "mongodb": "^7.0.0",
     "passport": "^0.7.0",
     "passport-facebook": "^3.0.0",
     "passport-google-oauth20": "^2.0.0",
