@@ -81,9 +81,21 @@ const AppContent: React.FC = () => {
 
   // --- PERSISTENCE & SESSION CHECK ---
   useEffect(() => {
+    // Handle Supabase OAuth redirect (hash fragment)
+    const handleOAuthRedirect = async () => {
+      if (window.location.hash && window.location.hash.includes('access_token')) {
+        // Supabase will automatically parse and store session, just clean up URL
+        window.location.hash = '';
+      }
+    };
+    handleOAuthRedirect();
+
     const initSession = async () => {
-      const userId = await checkSessionService();
-      if (userId) {
+      // Use Supabase Auth session
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session && session.user) {
+        // You may want to create/load user data here
+        const userId = session.user.id;
         const data = await loadUserData(userId);
         if (data) {
           // Check and Reset Daily Limits (Bonus + Ads)
