@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Lock, Mail, ArrowRight, User, CheckCircle } from 'lucide-react';
 import { useLanguage } from '../services/i18n';
-import { loginService, signupService } from '../services/firebase';
+import { supabase } from '../services/supabase';
 import { supabase } from '../services/supabase';
 
 interface LoginProps {
@@ -20,36 +20,43 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    
-    // Basic Validation
-    if (activeTab === 'signup' && password.length < 6) {
-        setError("Password must be at least 6 characters long.");
-        return;
-    }
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError('');
 
-    setIsLoading(true);
-
-    try {
-        if (activeTab === 'signup') {
-            // Sign Up Logic
-            if (!username || !email || !password) {
-                throw new Error("All fields are required");
-            }
-            const result = await signupService(email, password, username);
-            onLogin(result);
-        } else {
-            // Login Logic
-            const result = await loginService(email, password);
-            onLogin(result);
+        // Basic Validation
+        if (activeTab === 'signup' && password.length < 6) {
+            setError("Password must be at least 6 characters long.");
+            return;
         }
-    } catch (err: any) {
-        setError(err.message || 'Authentication failed');
-        setIsLoading(false);
-    }
-  };
+
+        setIsLoading(true);
+
+        try {
+            if (activeTab === 'signup') {
+                if (!username || !email || !password) {
+                    throw new Error("All fields are required");
+                }
+                const { data, error } = await supabase.auth.signUp({
+                    email,
+                    password,
+                    options: { data: { username } }
+                });
+                if (error) throw error;
+                onLogin({ user: data.user, isNew: true });
+            } else {
+                const { data, error } = await supabase.auth.signInWithPassword({
+                    email,
+                    password
+                });
+                if (error) throw error;
+                onLogin({ user: data.user, isNew: false });
+            }
+        } catch (err: any) {
+            setError(err.message || 'Authentication failed');
+            setIsLoading(false);
+        }
+    };
 
     const handleGoogleLogin = async () => {
         setIsLoading(true);
