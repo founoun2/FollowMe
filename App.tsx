@@ -108,10 +108,7 @@ const AppContent: React.FC = () => {
     initSession();
 
     // --- SUPABASE REAL-TIME SUBSCRIPTIONS ---
-    // Import supabase client
-    // @ts-ignore
-    import { supabase } from './services/supabase';
-
+    // Use top-level supabase import
     // Campaigns real-time
     const campaignsSub = supabase
       .channel('public:campaigns')
