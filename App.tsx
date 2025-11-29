@@ -13,6 +13,7 @@ import { I18nProvider, useLanguage } from './services/i18n';
 import { checkSessionService, loadUserData, logoutService, saveUserData } from './services/firebase';
 import { Coins, Sparkles, X, Calendar, Gift } from 'lucide-react';
 import { supabase } from './services/supabase';
+import { Analytics } from '@vercel/analytics/react';
 
 // GLOBAL MOCK TASKS (In real app, these come from DB)
 const GLOBAL_TASKS: Task[] = [
@@ -537,7 +538,8 @@ const AppContent: React.FC = () => {
 const App: React.FC = () => {
   return (
     <I18nProvider>
-        <AppContent />
+      <AppContent />
+      <Analytics />
     </I18nProvider>
   );
 };
